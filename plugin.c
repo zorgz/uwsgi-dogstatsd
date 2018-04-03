@@ -25,9 +25,11 @@ struct dogstatsd_node {
   socklen_t addr_len;
   char *prefix;
   uint16_t prefix_len;
+  char *instance_name;
+  uint16_t instance_name_len;
 };
 
-static int dogstatsd_generate_tags(char *metric, size_t metric_len, char *datatog_metric_name, char *datadog_tags) {
+static int dogstatsd_generate_tags(struct dogstatsd_node *sn, char *metric, size_t metric_len, char *datatog_metric_name, char *datadog_tags) {
   char *start = metric;
   size_t metric_offset = 0;
 
@@ -43,6 +45,18 @@ static int dogstatsd_generate_tags(char *metric, size_t metric_len, char *datato
   char *next_character = NULL;
 
   errno = 0;
+
+ if (strlen(datadog_tags))
+   strncat(datadog_tags, tag_separator, (MAX_BUFFER_SIZE - strlen(datadog_tags) - strlen(tag_separator) - 1));
+ else
+   strncat(datadog_tags, tag_prefix, (MAX_BUFFER_SIZE - strlen(datadog_tags) - strlen(tag_prefix) - 1));
+
+  if (sn->instance_name && sn->instance_name[0]) {
+    key = "instance";
+    strncat(datadog_tags, key, (MAX_BUFFER_SIZE - strlen(datadog_tags) - strlen(key) - 1));
+    strncat(datadog_tags, &tag_colon, 1);
+    strncat(datadog_tags, sn->instance_name, (MAX_BUFFER_SIZE - strlen(datadog_tags) - sn->instance_name_len - 1));
+  }
 
   token = strtok_r(start, metric_separator, &ctxt);
 
@@ -121,7 +135,7 @@ static int dogstatsd_send_metric(struct uwsgi_buffer *ub, struct uwsgi_stats_pus
   strncpy(raw_metric_name, metric, metric_len + 1);
 
   // try to extract tags
-  extracted_tags = dogstatsd_generate_tags(raw_metric_name, metric_len, datatog_metric_name, datadog_tags);
+  extracted_tags = dogstatsd_generate_tags(sn, raw_metric_name, metric_len, datatog_metric_name, datadog_tags);
 
   if (extracted_tags < 0)
     return -1;
@@ -159,15 +173,14 @@ static void stats_pusher_dogstatsd(struct uwsgi_stats_pusher_instance *uspi, tim
     struct dogstatsd_node *sn = uwsgi_calloc(sizeof(struct dogstatsd_node));
     char *comma = strchr(uspi->arg, ',');
     if (comma) {
-      sn->prefix = comma+1;
-      sn->prefix_len = strlen(sn->prefix);
+      sn->instance_name = comma+1;
+      sn->instance_name_len = strlen(sn->instance_name);
       *comma = 0;
     }
-    else {
-      sn->prefix = "uwsgi";
-      sn->prefix_len = 5;
-    }
 
+    sn->prefix = "uwsgi";
+    sn->prefix_len = 5;
+    
     char *colon = strchr(uspi->arg, ':');
     if (!colon) {
       uwsgi_log("invalid dd address %s\n", uspi->arg);
